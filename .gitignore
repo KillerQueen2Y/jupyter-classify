@@ -35,7 +35,11 @@ lastframe_*/
 !lastframe_8/
 !lastframe_8/**
 outputs/
+output/
 figures/
 plots/
 runs/
 *.log
+
+
+cache/
