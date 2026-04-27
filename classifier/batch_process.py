@@ -20,7 +20,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from PIL import Image
 
-
 DEFAULT_DATA_ROOT = Path("../lastframe_8")
 DEFAULT_OUTPUT_ROOT = Path("output")
 
@@ -30,12 +29,10 @@ FFT_RANGES = [
     {"label": "0-71", "start": 0, "end": None},
 ]
 
-
 def heads_in_layer(attn_file: Path):
     payload = torch.load(attn_file, map_location="cpu", weights_only=False)
     per_head = payload["last_frame_attention_per_head"]
     return int(per_head.shape[0])
-
 
 def process_run(run_dir: Path, output_root: Path, cache_path: Path = None, period_threshold: float = 6.0, ignore_last_frames: int = 3):
     print(f"Processing run: {run_dir}")
@@ -43,7 +40,7 @@ def process_run(run_dir: Path, output_root: Path, cache_path: Path = None, perio
     run_out.mkdir(parents=True, exist_ok=True)
     labels_by_layer = {}
     for layer_file in sorted(run_dir.glob("layer*.pt")):
-        layer_name = layer_file.stem  # e.g., layer0
+        layer_name = layer_file.stem
         try:
             n_heads = heads_in_layer(layer_file)
         except Exception as e:
@@ -56,9 +53,10 @@ def process_run(run_dir: Path, output_root: Path, cache_path: Path = None, perio
         head_labels = []
         head_attns = []
         head_results = []
+
         for head in range(n_heads):
             try:
-                # determine attention source: prefer cache_path/run_name, then cache_path itself, else input run_dir
+                # determine attention source
                 if cache_path:
                     candidate = cache_path / run_dir.name
                     if candidate.exists():
@@ -77,16 +75,15 @@ def process_run(run_dir: Path, output_root: Path, cache_path: Path = None, perio
                     fft_ranges=FFT_RANGES,
                     ignore_last_frames=ignore_last_frames,
                 )
-                # add label and accumulate per-layer results (we'll write one JSON per layer)
+
                 try:
                     label = label_head_from_result(result, period_threshold=period_threshold)
                 except Exception:
                     label = "Unknown"
                 result["label"] = label
                 head_results.append(result)
-
-                # collect for layer plot and labels
                 head_labels.append(label)
+
                 try:
                     attn_vec, frame_idx, _ = load_attention(attn_source, layer_index, head)
                 except Exception:
@@ -100,31 +97,19 @@ def process_run(run_dir: Path, output_root: Path, cache_path: Path = None, perio
                 print(f"  Error processing {layer_file.name} head {head}:")
                 traceback.print_exc()
 
-        # create FL 图 for the layer (per-head bar+line grid, following reference style)
+        # create FL 图
         try:
             n_heads_layer = len(head_attns)
-            cols = min(5, max(1, n_heads_layer))
+            cols = min(4, max(1, n_heads_layer))
             rows = int(np.ceil(n_heads_layer / cols))
-            fig, axes = plt.subplots(rows, cols, figsize=(16, 3 * rows))
+            fig, axes = plt.subplots(rows, cols, figsize=(14, 3 * rows))
             axes = np.atleast_1d(axes).flatten()
-
             BAR_COLOR = sns.color_palette("colorblind")[0]
 
-            # determine tick positions based on number of frames (use first non-None attn)
-            sample_attn = None
-            for attn_vec, frame_idx, _ in head_attns:
-                if attn_vec is not None:
-                    sample_attn = attn_vec
-                    break
+            sample_attn = next((attn_vec for attn_vec, _, _ in head_attns if attn_vec is not None), None)
             num_frames = len(sample_attn) if sample_attn is not None else 0
-            if num_frames <= 30:
-                tick_step = 5
-            elif num_frames <= 60:
-                tick_step = 10
-            else:
-                tick_step = 20
-            tick_pos = list(range(0, max(1, num_frames), tick_step)) + ([num_frames - 1] if num_frames>0 else [])
-            tick_pos = sorted(set(tick_pos))
+            tick_step = 5 if num_frames <= 30 else 10 if num_frames <= 60 else 20
+            tick_pos = sorted(set(list(range(0, max(1, num_frames), tick_step)) + ([num_frames - 1] if num_frames>0 else [])))
 
             for h in range(n_heads_layer):
                 ax = axes[h]
@@ -140,8 +125,8 @@ def process_run(run_dir: Path, output_root: Path, cache_path: Path = None, perio
                     except Exception:
                         pass
                     ax.set_xticks(tick_pos)
+
                 ht_str = head_labels[h] if h < len(head_labels) else 'unknown'
-                # annotate periods if available
                 period_str = ''
                 try:
                     metrics = {}
@@ -159,7 +144,7 @@ def process_run(run_dir: Path, output_root: Path, cache_path: Path = None, perio
                 except Exception:
                     period_str = ''
 
-                ax.set_title(f"H{h} ({ht_str}){period_str}", fontsize=10, fontweight='bold')
+                ax.set_title(f"H{h} ({ht_str}){period_str}", fontsize=11, fontweight='bold')
                 ax.grid(True, alpha=0.3)
                 ax.tick_params(axis="both", which="major", labelsize=7)
 
@@ -167,9 +152,11 @@ def process_run(run_dir: Path, output_root: Path, cache_path: Path = None, perio
             for k in range(n_heads_layer, len(axes)):
                 axes[k].axis('off')
 
-            fig.suptitle(f"Layer {layer_index}: Per-Head Attention Distribution", fontsize=12, fontweight='bold')
-            plt.tight_layout()
-            # save SVG (preferred) and PNG
+            # fixed suptitle and subtitle positions to avoid overlap
+            fig.suptitle(f"Layer {layer_index}", fontsize=20, fontweight='normal', y=0.98)
+            fig.text(0.5, 0.945, f"Per-Head Attention Distribution", ha='center', va='top', fontsize=14, fontweight='light')
+
+            plt.tight_layout(rect=[0, 0, 1, 0.92])
             svg_path = layer_out / f"{layer_name}_FL.svg"
             png_path = layer_out / f"{layer_name}_FL.png"
             fig.savefig(svg_path, format='svg', bbox_inches='tight')
@@ -190,7 +177,6 @@ def process_run(run_dir: Path, output_root: Path, cache_path: Path = None, perio
 
         labels_by_layer[layer_index] = [_label_to_num(x) for x in head_labels]
 
-        # write one JSON per layer containing all heads' results
         try:
             layer_json = {
                 "layer": layer_index,
@@ -206,7 +192,6 @@ def process_run(run_dir: Path, output_root: Path, cache_path: Path = None, perio
             traceback.print_exc()
     return labels_by_layer
 
-
 def parse_args():
     p = argparse.ArgumentParser(description="Batch classify attention files in a directory of runs")
     p.add_argument("--cache", required=False, default=str(DEFAULT_DATA_ROOT),
@@ -219,22 +204,19 @@ def parse_args():
                    help="Number of frames at the end to ignore when computing periods (default: 3)")
     return p.parse_args()
 
-
 def main(data_root: Path, output_root: Path, cache_root: Path = None, period_threshold: float = 6.0, ignore_last_frames: int = 3):
     data_root = data_root.resolve()
     output_root = output_root.resolve()
-
     if not data_root.exists():
         print(f"Data root {data_root} does not exist. Adjust the path.")
         return
-
     cache_path = cache_root.resolve() if cache_root else None
 
     for run_dir in sorted(data_root.iterdir()):
         if not run_dir.is_dir():
             continue
         labels_by_layer = process_run(run_dir, output_root, cache_path=cache_path, period_threshold=period_threshold, ignore_last_frames=ignore_last_frames)
-        # assemble CSV and compose one large FL image (vertical concatenation of per-layer FLs)
+
         try:
             if labels_by_layer:
                 max_layer = max(labels_by_layer.keys())
@@ -251,38 +233,42 @@ def main(data_root: Path, output_root: Path, cache_root: Path = None, period_thr
                 csv_path = run_out / "labels.csv"
                 np.savetxt(csv_path, mat, fmt='%d', delimiter=',')
 
-                # compose big FL image by reading each layer's PNG and stacking vertically
+                # compose big FL image
                 layer_images = []
-                widths = []
-                heights = []
                 for li in range(n_layers):
                     layer_name = f"layer{li}"
                     img_path = run_out / layer_name / f"{layer_name}_FL.png"
                     if img_path.exists():
                         try:
                             img = Image.open(img_path).convert('RGBA')
-                            layer_images.append(img)
-                            widths.append(img.width)
-                            heights.append(img.height)
+                            layer_images.append((li, img))
                         except Exception:
                             print(f"  Failed to open {img_path}")
                             continue
 
                 if layer_images:
-                    max_w = max(widths)
-                    total_h = sum(heights)
-                    composite = Image.new('RGBA', (max_w, total_h), (255, 255, 255, 255))
-                    y = 0
-                    for img in layer_images:
-                        # pad to max width if needed
-                        if img.width < max_w:
-                            padded = Image.new('RGBA', (max_w, img.height), (255, 255, 255, 255))
+                    layer_images.sort(key=lambda x: x[0])
+                    images_only = [img for _, img in layer_images]
+                    max_w = max(img.width for img in images_only)
+                    max_h = max(img.height for img in images_only)
+                    cols_grid = 5
+                    rows_grid = int(np.ceil(len(images_only) / cols_grid))
+                    pad_x = 20
+                    pad_y = 40
+                    comp_w = cols_grid * max_w + (cols_grid - 1) * pad_x
+                    comp_h = rows_grid * max_h + (rows_grid - 1) * pad_y
+                    composite = Image.new('RGBA', (comp_w, comp_h), (255, 255, 255, 255))
+                    for idx, img in enumerate(images_only):
+                        r = idx // cols_grid
+                        c = idx % cols_grid
+                        x = c * (max_w + pad_x)
+                        y = r * (max_h + pad_y)
+                        if img.width < max_w or img.height < max_h:
+                            padded = Image.new('RGBA', (max_w, max_h), (255, 255, 255, 255))
                             padded.paste(img, (0, 0))
-                            composite.paste(padded, (0, y))
+                            composite.paste(padded, (x, y))
                         else:
-                            composite.paste(img, (0, y))
-                        y += img.height
-
+                            composite.paste(img, (x, y))
                     out_img_path = run_out / "all_layers_FL.png"
                     composite.convert('RGB').save(out_img_path, format='PNG')
                     print(f"  Wrote combined FL image: {out_img_path.relative_to(Path.cwd())}")
@@ -292,10 +278,8 @@ def main(data_root: Path, output_root: Path, cache_root: Path = None, period_thr
             print(f"Failed to write labels CSV or compose FL image for {run_dir}")
             traceback.print_exc()
 
-
 if __name__ == "__main__":
     args = parse_args()
     data_root = Path(args.cache)
     output_root = Path(args.output_root)
-    # use --cache as the top-level data root; no separate cache path
     main(data_root, output_root, cache_root=None, period_threshold=args.period_threshold, ignore_last_frames=args.ignore_last_frames)
