@@ -34,7 +34,7 @@ def heads_in_layer(attn_file: Path):
     per_head = payload["last_frame_attention_per_head"]
     return int(per_head.shape[0])
 
-def process_run(run_dir: Path, output_root: Path, cache_path: Path = None, period_threshold: float = 6.0, ignore_last_frames: int = 3):
+def process_run(run_dir: Path, output_root: Path, cache_path: Path = None, period_threshold: float = 6.0, ignore_last_frames: int = 3, sign_threshold: float = 0.9):
     print(f"Processing run: {run_dir}")
     run_out = output_root / run_dir.name
     run_out.mkdir(parents=True, exist_ok=True)
@@ -77,7 +77,7 @@ def process_run(run_dir: Path, output_root: Path, cache_path: Path = None, perio
                 )
 
                 try:
-                    label = label_head_from_result(result, period_threshold=period_threshold)
+                    label = label_head_from_result(result, period_threshold=period_threshold, sign_threshold=sign_threshold)
                 except Exception:
                     label = "Unknown"
                 result["label"] = label
@@ -200,11 +200,13 @@ def parse_args():
                    help="Where to write per-run output directories. Default: classifier/output")
     p.add_argument("--period-threshold", type=float, default=6.0,
                    help="Period threshold (frames) below which a head is labeled 'Wave Head'. Default: 6.0")
+    p.add_argument("--sign-threshold", type=float, default=0.9,
+                   help="Sign-rate threshold (0-1) to directly label Anchor/Veil when exceeded. Default: 0.9")
     p.add_argument("--ignore-last-frames", type=int, default=3,
                    help="Number of frames at the end to ignore when computing periods (default: 3)")
     return p.parse_args()
 
-def main(data_root: Path, output_root: Path, cache_root: Path = None, period_threshold: float = 6.0, ignore_last_frames: int = 3):
+def main(data_root: Path, output_root: Path, cache_root: Path = None, period_threshold: float = 6.0, ignore_last_frames: int = 3, sign_threshold: float = 0.9):
     data_root = data_root.resolve()
     output_root = output_root.resolve()
     if not data_root.exists():
@@ -215,7 +217,7 @@ def main(data_root: Path, output_root: Path, cache_root: Path = None, period_thr
     for run_dir in sorted(data_root.iterdir()):
         if not run_dir.is_dir():
             continue
-        labels_by_layer = process_run(run_dir, output_root, cache_path=cache_path, period_threshold=period_threshold, ignore_last_frames=ignore_last_frames)
+        labels_by_layer = process_run(run_dir, output_root, cache_path=cache_path, period_threshold=period_threshold, ignore_last_frames=ignore_last_frames, sign_threshold=sign_threshold)
 
         try:
             if labels_by_layer:
@@ -282,4 +284,11 @@ if __name__ == "__main__":
     args = parse_args()
     data_root = Path(args.cache)
     output_root = Path(args.output_root)
-    main(data_root, output_root, cache_root=None, period_threshold=args.period_threshold, ignore_last_frames=args.ignore_last_frames)
+    main(
+        data_root,
+        output_root,
+        cache_root=None,
+        period_threshold=args.period_threshold,
+        ignore_last_frames=args.ignore_last_frames,
+        sign_threshold=args.sign_threshold,
+    )

@@ -1,13 +1,16 @@
-"""
-Simple head-labeling utilities.
+"""Simple head-labeling utilities.
 
-Rules implemented:
-- If any detected period (global_period or response_period) is finite and
-  less than `period_threshold` (default 6.0) -> 'Wave Head'
-- Otherwise load the attention vector and compute its mean: mean > 0 ->
-  'Anchor Head', else 'Veil Head'.
+Rules implemented (updated):
+- First, if an attention vector can be loaded, compute the fraction of
+    positive values (positive rate). If `positive_rate >= sign_threshold`
+    -> 'Anchor Head'. If `(1 - positive_rate) >= sign_threshold` -> 'Veil Head'.
+- Next, if any detected period (global_period or response_period) is finite
+    and less than `period_threshold` -> 'Wave Head'.
+- Otherwise compute the attention mean: mean > 0 -> 'Anchor Head', else
+    'Veil Head'.
 
-This module exposes `label_head_from_result(result, period_threshold=6.0)`.
+The main entrypoint is `label_head_from_result(result, period_threshold=6.0,
+sign_threshold=0.9)`.
 """
 from pathlib import Path
 import math
@@ -43,16 +46,47 @@ def _load_attention_from_result(result):
     return arr
 
 
-def label_head_from_result(result: dict, period_threshold: float = 6.0) -> str:
-    """Return label string for a head result: 'Wave Head'|'Anchor Head'|'Veil Head'."""
+def label_head_from_result(result: dict, period_threshold: float = 6.0, sign_threshold: float = 0.9) -> str:
+    """Return label string for a head result: 'Wave Head'|'Anchor Head'|'Veil Head'.
+
+    Ordering:
+    1. Try sign-rate based decision if attention vector is available.
+    2. Wave detection via period threshold `period_threshold`.
+    3. Fallback to attention mean (or global_amp sign) as before.
+
+    `sign_threshold` should be in [0.0, 1.0].
+    """
+    attn = None
+    try:
+        attn = _load_attention_from_result(result)
+    except Exception:
+        attn = None
+
+    # 1) Sign-rate based decision
+    try:
+        if attn is not None and sign_threshold is not None:
+            if not (0.0 <= float(sign_threshold) <= 1.0):
+                raise ValueError("sign_threshold must be in [0,1]")
+            pos_rate = float(np.mean(attn > 0))
+            neg_rate = 1.0 - pos_rate
+            if pos_rate >= float(sign_threshold):
+                return "Anchor Head"
+            if neg_rate >= float(sign_threshold):
+                return "Veil Head"
+    except Exception:
+        # Any failure here should not prevent further fallback checks
+        pass
+
+    # 2) Wave detection by short period
     if _has_short_period(result, period_threshold):
         return "Wave Head"
 
+    # 3) Fallback to mean-based decision
     try:
-        attn = _load_attention_from_result(result)
+        if attn is None:
+            attn = _load_attention_from_result(result)
         mean = float(np.mean(attn))
     except Exception:
-        # If we cannot load attention, fallback to using global_amp sign if available
         amps = []
         for e in result.get("raw_results", []):
             try:
