@@ -1,10 +1,13 @@
 """
-Batch processing script that walks `lastframe_8` runs and applies classification
+Batch processing script that walks `lastframe_*` runs and applies classification
 from `core.classify_attention` for each layer and head. Results are saved as JSON
-under `classifier/output/<run>/<layer>_head<k>.json`.
+and per-layer FL images, and a combined FL image + `labels.csv` is produced per run.
+
+Supports `--direct` to skip writing per-layer files and instead keep per-layer
+images in memory and write only the combined image + CSV.
 
 Run as:
-    uv run python classifier/batch_process.py
+    uv run python -m classifier.batch_process --cache <data_root> --output-root <output> [--direct]
 """
 from pathlib import Path
 import json
@@ -19,6 +22,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
 from PIL import Image
+import io
 
 DEFAULT_DATA_ROOT = Path("../lastframe_8")
 DEFAULT_OUTPUT_ROOT = Path("output")
@@ -29,16 +33,25 @@ FFT_RANGES = [
     {"label": "0-71", "start": 0, "end": None},
 ]
 
+
 def heads_in_layer(attn_file: Path):
     payload = torch.load(attn_file, map_location="cpu", weights_only=False)
     per_head = payload["last_frame_attention_per_head"]
     return int(per_head.shape[0])
 
-def process_run(run_dir: Path, output_root: Path, cache_path: Path = None, period_threshold: float = 6.0, ignore_last_frames: int = 3, sign_threshold: float = 0.9):
+
+def process_run(run_dir: Path, output_root: Path, cache_path: Path = None,
+                period_threshold: float = 6.0, ignore_last_frames: int = 3,
+                sign_threshold: float = 0.9, direct: bool = False):
+    """Process one run directory.
+    Returns: (labels_by_layer: dict[layer_index -> list[int]], layer_images: list[(layer_index, PIL.Image)])
+    """
     print(f"Processing run: {run_dir}")
     run_out = output_root / run_dir.name
     run_out.mkdir(parents=True, exist_ok=True)
     labels_by_layer = {}
+    layer_images = []
+
     for layer_file in sorted(run_dir.glob("layer*.pt")):
         layer_name = layer_file.stem
         try:
@@ -49,7 +62,9 @@ def process_run(run_dir: Path, output_root: Path, cache_path: Path = None, perio
 
         layer_index = int(layer_name.replace("layer", ""))
         layer_out = run_out / layer_name
-        layer_out.mkdir(parents=True, exist_ok=True)
+        if not direct:
+            layer_out.mkdir(parents=True, exist_ok=True)
+
         head_labels = []
         head_attns = []
         head_results = []
@@ -97,7 +112,7 @@ def process_run(run_dir: Path, output_root: Path, cache_path: Path = None, perio
                 print(f"  Error processing {layer_file.name} head {head}:")
                 traceback.print_exc()
 
-        # create FL 图
+        # Plot per-layer grid
         try:
             n_heads_layer = len(head_attns)
             cols = min(4, max(1, n_heads_layer))
@@ -109,7 +124,7 @@ def process_run(run_dir: Path, output_root: Path, cache_path: Path = None, perio
             sample_attn = next((attn_vec for attn_vec, _, _ in head_attns if attn_vec is not None), None)
             num_frames = len(sample_attn) if sample_attn is not None else 0
             tick_step = 5 if num_frames <= 30 else 10 if num_frames <= 60 else 20
-            tick_pos = sorted(set(list(range(0, max(1, num_frames), tick_step)) + ([num_frames - 1] if num_frames>0 else [])))
+            tick_pos = sorted(set(list(range(0, max(1, num_frames), tick_step)) + ([num_frames - 1] if num_frames > 0 else [])))
 
             for h in range(n_heads_layer):
                 ax = axes[h]
@@ -118,7 +133,7 @@ def process_run(run_dir: Path, output_root: Path, cache_path: Path = None, perio
                 if attn_vec is not None and frame_idx is not None:
                     key_indices = np.arange(len(attn_vec))
                     ax.bar(key_indices, attn_vec, alpha=0.85, width=0.8, color=BAR_COLOR)
-                    markersize = max(1, 4 - num_frames // 20) if num_frames>0 else 3
+                    markersize = max(1, 4 - num_frames // 20) if num_frames > 0 else 3
                     ax.plot(key_indices, attn_vec, "o-", color="black", linewidth=1, markersize=markersize)
                     try:
                         ax.set_ylim(np.nanmin(attn_vec) - 0.01, np.nanmax(attn_vec) + 0.01)
@@ -148,20 +163,30 @@ def process_run(run_dir: Path, output_root: Path, cache_path: Path = None, perio
                 ax.grid(True, alpha=0.3)
                 ax.tick_params(axis="both", which="major", labelsize=7)
 
-            # hide unused axes
             for k in range(n_heads_layer, len(axes)):
                 axes[k].axis('off')
 
-            # fixed suptitle and subtitle positions to avoid overlap
             fig.suptitle(f"Layer {layer_index}", fontsize=20, fontweight='normal', y=0.98)
             fig.text(0.5, 0.945, f"Per-Head Attention Distribution", ha='center', va='top', fontsize=14, fontweight='light')
 
             plt.tight_layout(rect=[0, 0, 1, 0.92])
-            svg_path = layer_out / f"{layer_name}_FL.svg"
-            png_path = layer_out / f"{layer_name}_FL.png"
-            fig.savefig(svg_path, format='svg', bbox_inches='tight')
-            fig.savefig(png_path, format='png', dpi=150, bbox_inches='tight')
-            plt.close(fig)
+
+            if direct:
+                buf = io.BytesIO()
+                fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+                buf.seek(0)
+                try:
+                    img = Image.open(buf).convert('RGBA')
+                    layer_images.append((layer_index, img))
+                except Exception:
+                    pass
+                plt.close(fig)
+            else:
+                svg_path = layer_out / f"{layer_name}_FL.svg"
+                png_path = layer_out / f"{layer_name}_FL.png"
+                fig.savefig(svg_path, format='svg', bbox_inches='tight')
+                fig.savefig(png_path, format='png', dpi=150, bbox_inches='tight')
+                plt.close(fig)
         except Exception:
             print(f"  Failed to create FL image for {layer_name}")
             traceback.print_exc()
@@ -177,20 +202,24 @@ def process_run(run_dir: Path, output_root: Path, cache_path: Path = None, perio
 
         labels_by_layer[layer_index] = [_label_to_num(x) for x in head_labels]
 
-        try:
-            layer_json = {
-                "layer": layer_index,
-                "n_heads": n_heads,
-                "heads": head_results,
-            }
-            layer_json_path = layer_out / f"{layer_name}.json"
-            with open(layer_json_path, "w", encoding="utf-8") as f:
-                json.dump(layer_json, f, indent=2)
-            print(f"  Wrote {layer_json_path.relative_to(Path.cwd())}")
-        except Exception:
-            print(f"  Failed to write layer JSON for {layer_name}")
-            traceback.print_exc()
-    return labels_by_layer
+        # write one JSON per layer containing all heads' results (skip in direct mode)
+        if not direct:
+            try:
+                layer_json = {
+                    "layer": layer_index,
+                    "n_heads": n_heads,
+                    "heads": head_results,
+                }
+                layer_json_path = layer_out / f"{layer_name}.json"
+                with open(layer_json_path, "w", encoding="utf-8") as f:
+                    json.dump(layer_json, f, indent=2)
+                print(f"  Wrote {layer_json_path.relative_to(Path.cwd())}")
+            except Exception:
+                print(f"  Failed to write layer JSON for {layer_name}")
+                traceback.print_exc()
+
+    return labels_by_layer, layer_images
+
 
 def parse_args():
     p = argparse.ArgumentParser(description="Batch classify attention files in a directory of runs")
@@ -204,21 +233,33 @@ def parse_args():
                    help="Sign-rate threshold (0-1) to directly label Anchor/Veil when exceeded. Default: 0.9")
     p.add_argument("--ignore-last-frames", type=int, default=3,
                    help="Number of frames at the end to ignore when computing periods (default: 3)")
+    p.add_argument("--direct", action="store_true",
+                   help="If set, do not write per-layer JSON/PNG; generate combined image and CSV directly")
     return p.parse_args()
 
-def main(data_root: Path, output_root: Path, cache_root: Path = None, period_threshold: float = 6.0, ignore_last_frames: int = 3, sign_threshold: float = 0.9):
+
+def main(data_root: Path, output_root: Path, cache_root: Path = None,
+         period_threshold: float = 6.0, ignore_last_frames: int = 3,
+         sign_threshold: float = 0.9, direct: bool = False):
     data_root = data_root.resolve()
     output_root = output_root.resolve()
+
     if not data_root.exists():
         print(f"Data root {data_root} does not exist. Adjust the path.")
         return
+
     cache_path = cache_root.resolve() if cache_root else None
 
     for run_dir in sorted(data_root.iterdir()):
         if not run_dir.is_dir():
             continue
-        labels_by_layer = process_run(run_dir, output_root, cache_path=cache_path, period_threshold=period_threshold, ignore_last_frames=ignore_last_frames, sign_threshold=sign_threshold)
+        labels_by_layer, layer_images = process_run(run_dir, output_root, cache_path=cache_path,
+                                                    period_threshold=period_threshold,
+                                                    ignore_last_frames=ignore_last_frames,
+                                                    sign_threshold=sign_threshold,
+                                                    direct=direct)
 
+        # assemble CSV and compose one large FL image (grid of per-layer FLs)
         try:
             if labels_by_layer:
                 max_layer = max(labels_by_layer.keys())
@@ -236,17 +277,20 @@ def main(data_root: Path, output_root: Path, cache_root: Path = None, period_thr
                 np.savetxt(csv_path, mat, fmt='%d', delimiter=',')
 
                 # compose big FL image
-                layer_images = []
-                for li in range(n_layers):
-                    layer_name = f"layer{li}"
-                    img_path = run_out / layer_name / f"{layer_name}_FL.png"
-                    if img_path.exists():
-                        try:
-                            img = Image.open(img_path).convert('RGBA')
-                            layer_images.append((li, img))
-                        except Exception:
-                            print(f"  Failed to open {img_path}")
-                            continue
+                # prefer in-memory layer_images returned by process_run (direct mode);
+                # otherwise load per-layer PNGs from disk
+                if not layer_images:
+                    layer_images = []
+                    for li in range(n_layers):
+                        layer_name = f"layer{li}"
+                        img_path = run_out / layer_name / f"{layer_name}_FL.png"
+                        if img_path.exists():
+                            try:
+                                img = Image.open(img_path).convert('RGBA')
+                                layer_images.append((li, img))
+                            except Exception:
+                                print(f"  Failed to open {img_path}")
+                                continue
 
                 if layer_images:
                     layer_images.sort(key=lambda x: x[0])
@@ -271,6 +315,7 @@ def main(data_root: Path, output_root: Path, cache_root: Path = None, period_thr
                             composite.paste(padded, (x, y))
                         else:
                             composite.paste(img, (x, y))
+
                     out_img_path = run_out / "all_layers_FL.png"
                     composite.convert('RGB').save(out_img_path, format='PNG')
                     print(f"  Wrote combined FL image: {out_img_path.relative_to(Path.cwd())}")
@@ -279,6 +324,7 @@ def main(data_root: Path, output_root: Path, cache_root: Path = None, period_thr
         except Exception:
             print(f"Failed to write labels CSV or compose FL image for {run_dir}")
             traceback.print_exc()
+
 
 if __name__ == "__main__":
     args = parse_args()
@@ -291,4 +337,5 @@ if __name__ == "__main__":
         period_threshold=args.period_threshold,
         ignore_last_frames=args.ignore_last_frames,
         sign_threshold=args.sign_threshold,
+        direct=args.direct,
     )
