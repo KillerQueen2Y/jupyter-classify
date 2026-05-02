@@ -112,81 +112,74 @@ def process_run(run_dir: Path, output_root: Path, cache_path: Path = None,
                 print(f"  Error processing {layer_file.name} head {head}:")
                 traceback.print_exc()
 
-        # Plot per-layer grid
+        # Plot per-layer grid (skip plotting entirely in direct mode)
         try:
-            n_heads_layer = len(head_attns)
-            cols = min(4, max(1, n_heads_layer))
-            rows = int(np.ceil(n_heads_layer / cols))
-            fig, axes = plt.subplots(rows, cols, figsize=(14, 3 * rows))
-            axes = np.atleast_1d(axes).flatten()
-            BAR_COLOR = sns.color_palette("colorblind")[0]
+            if not direct:
+                n_heads_layer = len(head_attns)
+                cols = min(4, max(1, n_heads_layer))
+                rows = int(np.ceil(n_heads_layer / cols))
+                fig, axes = plt.subplots(rows, cols, figsize=(14, 3 * rows))
+                axes = np.atleast_1d(axes).flatten()
+                BAR_COLOR = sns.color_palette("colorblind")[0]
 
-            sample_attn = next((attn_vec for attn_vec, _, _ in head_attns if attn_vec is not None), None)
-            num_frames = len(sample_attn) if sample_attn is not None else 0
-            tick_step = 5 if num_frames <= 30 else 10 if num_frames <= 60 else 20
-            tick_pos = sorted(set(list(range(0, max(1, num_frames), tick_step)) + ([num_frames - 1] if num_frames > 0 else [])))
+                sample_attn = next((attn_vec for attn_vec, _, _ in head_attns if attn_vec is not None), None)
+                num_frames = len(sample_attn) if sample_attn is not None else 0
+                tick_step = 5 if num_frames <= 30 else 10 if num_frames <= 60 else 20
+                tick_pos = sorted(set(list(range(0, max(1, num_frames), tick_step)) + ([num_frames - 1] if num_frames > 0 else [])))
 
-            for h in range(n_heads_layer):
-                ax = axes[h]
-                attn_vec, frame_idx, res = head_attns[h]
+                for h in range(n_heads_layer):
+                    ax = axes[h]
+                    attn_vec, frame_idx, res = head_attns[h]
 
-                if attn_vec is not None and frame_idx is not None:
-                    key_indices = np.arange(len(attn_vec))
-                    ax.bar(key_indices, attn_vec, alpha=0.85, width=0.8, color=BAR_COLOR)
-                    markersize = max(1, 4 - num_frames // 20) if num_frames > 0 else 3
-                    ax.plot(key_indices, attn_vec, "o-", color="black", linewidth=1, markersize=markersize)
-                    try:
-                        ax.set_ylim(np.nanmin(attn_vec) - 0.01, np.nanmax(attn_vec) + 0.01)
-                    except Exception:
-                        pass
-                    ax.set_xticks(tick_pos)
+                    if attn_vec is not None and frame_idx is not None:
+                        key_indices = np.arange(len(attn_vec))
+                        ax.bar(key_indices, attn_vec, alpha=0.85, width=0.8, color=BAR_COLOR)
+                        markersize = max(1, 4 - num_frames // 20) if num_frames > 0 else 3
+                        ax.plot(key_indices, attn_vec, "o-", color="black", linewidth=1, markersize=markersize)
+                        try:
+                            ax.set_ylim(np.nanmin(attn_vec) - 0.01, np.nanmax(attn_vec) + 0.01)
+                        except Exception:
+                            pass
+                        ax.set_xticks(tick_pos)
 
-                ht_str = head_labels[h] if h < len(head_labels) else 'unknown'
-                period_str = ''
-                try:
-                    metrics = {}
-                    if res.get('raw_results'):
-                        rr = res.get('raw_results')[0]
-                        metrics['p'] = rr.get('global_period')
-                        metrics['W'] = rr.get('global_amp')
-                    parts = []
-                    if metrics.get('p') is not None:
-                        parts.append(f"p={metrics['p']:.1f}")
-                    if metrics.get('W') is not None:
-                        parts.append(f"W={metrics['W']:.3f}")
-                    if parts:
-                        period_str = ' ' + ' '.join(parts)
-                except Exception:
+                    ht_str = head_labels[h] if h < len(head_labels) else 'unknown'
                     period_str = ''
+                    try:
+                        metrics = {}
+                        if res.get('raw_results'):
+                            rr = res.get('raw_results')[0]
+                            metrics['p'] = rr.get('global_period')
+                            metrics['W'] = rr.get('global_amp')
+                        parts = []
+                        if metrics.get('p') is not None:
+                            parts.append(f"p={metrics['p']:.1f}")
+                        if metrics.get('W') is not None:
+                            parts.append(f"W={metrics['W']:.3f}")
+                        if parts:
+                            period_str = ' ' + ' '.join(parts)
+                    except Exception:
+                        period_str = ''
 
-                ax.set_title(f"H{h} ({ht_str}){period_str}", fontsize=11, fontweight='bold')
-                ax.grid(True, alpha=0.3)
-                ax.tick_params(axis="both", which="major", labelsize=7)
+                    ax.set_title(f"H{h} ({ht_str}){period_str}", fontsize=11, fontweight='bold')
+                    ax.grid(True, alpha=0.3)
+                    ax.tick_params(axis="both", which="major", labelsize=7)
 
-            for k in range(n_heads_layer, len(axes)):
-                axes[k].axis('off')
+                for k in range(n_heads_layer, len(axes)):
+                    axes[k].axis('off')
 
-            fig.suptitle(f"Layer {layer_index}", fontsize=20, fontweight='normal', y=0.98)
-            fig.text(0.5, 0.945, f"Per-Head Attention Distribution", ha='center', va='top', fontsize=14, fontweight='light')
+                fig.suptitle(f"Layer {layer_index}", fontsize=20, fontweight='normal', y=0.98)
+                fig.text(0.5, 0.945, f"Per-Head Attention Distribution", ha='center', va='top', fontsize=14, fontweight='light')
 
-            plt.tight_layout(rect=[0, 0, 1, 0.92])
+                plt.tight_layout(rect=[0, 0, 1, 0.92])
 
-            if direct:
-                buf = io.BytesIO()
-                fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
-                buf.seek(0)
-                try:
-                    img = Image.open(buf).convert('RGBA')
-                    layer_images.append((layer_index, img))
-                except Exception:
-                    pass
-                plt.close(fig)
-            else:
                 svg_path = layer_out / f"{layer_name}_FL.svg"
                 png_path = layer_out / f"{layer_name}_FL.png"
                 fig.savefig(svg_path, format='svg', bbox_inches='tight')
                 fig.savefig(png_path, format='png', dpi=150, bbox_inches='tight')
                 plt.close(fig)
+            else:
+                # Direct mode: intentionally skip per-layer plotting and image creation
+                pass
         except Exception:
             print(f"  Failed to create FL image for {layer_name}")
             traceback.print_exc()
