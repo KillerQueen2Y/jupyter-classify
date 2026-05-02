@@ -19,9 +19,10 @@ import numpy as np
 
 
 def _has_short_period(result, threshold: float) -> bool:
-    # Use raw_results' global_period only for Wave detection.
+    # Wave detection uses the folded FFT top-1 period (first diff + z-score + harmonic folding),
+    # mirroring the notebook's main flow.
     for entry in result.get("raw_results", []):
-        val = entry.get("global_period")
+        val = entry.get("folded_top1_period")
         if val is None:
             continue
         try:

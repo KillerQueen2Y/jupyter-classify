@@ -68,6 +68,126 @@ def preprocess_signal(sequence, remove_dc=True, apply_window=True):
     return signal
 
 
+def preprocess_first_difference(sequence, remove_dc=True, apply_window=True):
+    """First difference + optional DC removal + optional Hann window.
+
+    Z-scoring was dropped: argmax of folded FFT amplitude is invariant under
+    positive scaling, so the scaling step had no effect on the top1 period.
+    """
+    if sequence.ndim != 1 or sequence.size < 3:
+        raise ValueError(
+            f"First-difference FFT input must be 1D with at least 3 frames, got shape {sequence.shape}"
+        )
+
+    signal = np.diff(sequence.astype(np.float64, copy=True))
+    if remove_dc:
+        signal = signal - signal.mean()
+    if apply_window:
+        signal = signal * np.hanning(signal.size)
+    return signal
+
+
+def compute_harmonic_folded_spectrum(
+    period,
+    amplitude,
+    signal_size,
+    *,
+    min_period=3.0,
+    max_period_divisor=6.0,
+    max_multiple=4,
+    tol=0.2,
+    decay=0.5,
+):
+    """Add decayed harmonic amplitude back onto each fundamental candidate.
+
+    For each period in `[min_period, signal_size / max_period_divisor]`, look at
+    the 2..max_multiple-th harmonics; if a bin sits within `tol` relative error
+    of the harmonic period, add `amp * decay**(multiple-1)` to the fundamental's
+    score. Mirrors `spectral_analysis.ipynb`.
+    """
+    period = np.asarray(period, dtype=np.float64)
+    amplitude = np.asarray(amplitude, dtype=np.float64)
+
+    if max_period_divisor is None:
+        max_period = np.inf
+    elif max_period_divisor <= 0:
+        raise ValueError("max_period_divisor must be positive")
+    else:
+        max_period = signal_size / max_period_divisor
+
+    folded = amplitude.astype(np.float64, copy=True)
+    folding_mask = (period >= min_period) & (period <= max_period)
+    for idx in np.flatnonzero(folding_mask):
+        base = period[idx]
+        for multiple in range(2, int(max_multiple) + 1):
+            target = multiple * base
+            harmonic_idx = int(np.argmin(np.abs(period - target)))
+            if abs(period[harmonic_idx] - target) / target < tol:
+                folded[idx] += amplitude[harmonic_idx] * (decay ** (multiple - 1))
+    return folded
+
+
+def compute_folded_top1_period(
+    sequence,
+    *,
+    period_min=2.0,
+    period_max=None,
+    remove_dc=True,
+    apply_window=True,
+    harmonic_folding_enabled=True,
+    harmonic_fold_min_period=3.0,
+    harmonic_fold_max_period_divisor=6.0,
+    harmonic_fold_max_multiple=4,
+    harmonic_fold_tol=0.2,
+    harmonic_fold_decay=0.5,
+):
+    """First-difference + FFT + harmonic folding, return top-1 folded period
+    within ``[period_min, period_max]``. Mirrors the notebook's main flow used
+    to populate ``head_period_homology_*`` CSV/PNG outputs.
+    """
+    signal = preprocess_first_difference(sequence, remove_dc=remove_dc, apply_window=apply_window)
+    freq = np.fft.rfftfreq(signal.size, d=1.0)
+    amplitude = np.abs(np.fft.rfft(signal))
+    nonzero = freq > 0
+    if not np.any(nonzero):
+        return float("nan")
+
+    period = 1.0 / freq[nonzero]
+    period_amp = amplitude[nonzero]
+    order = np.argsort(period)
+    period = period[order]
+    period_amp = period_amp[order]
+
+    display_mask = np.ones_like(period, dtype=bool)
+    if period_min is not None:
+        display_mask &= period >= period_min
+    if period_max is not None:
+        display_mask &= period <= period_max
+    if not np.any(display_mask):
+        return float("nan")
+
+    if harmonic_folding_enabled:
+        folded_amp = compute_harmonic_folded_spectrum(
+            period,
+            period_amp,
+            signal.size,
+            min_period=harmonic_fold_min_period,
+            max_period_divisor=harmonic_fold_max_period_divisor,
+            max_multiple=harmonic_fold_max_multiple,
+            tol=harmonic_fold_tol,
+            decay=harmonic_fold_decay,
+        )
+    else:
+        folded_amp = period_amp.astype(np.float64, copy=True)
+
+    pool = np.flatnonzero(display_mask)
+    folded_in_display = folded_amp[display_mask]
+    if not np.any(folded_in_display > 0):
+        return float("nan")
+    top_idx = int(pool[np.argmax(folded_in_display)])
+    return float(period[top_idx])
+
+
 def compute_period_spectrum(
     sequence,
     period_min=2.0,
@@ -130,19 +250,32 @@ def compute_period_spectrum(
 
 
 def analyze_fft_ranges(values, fft_ranges, **spectrum_kwargs):
+    folded_kwargs = {
+        k: spectrum_kwargs[k]
+        for k in ("period_min", "period_max", "remove_dc", "apply_window")
+        if k in spectrum_kwargs
+    }
     results = []
     for cfg in fft_ranges:
         start, end, start_norm, end_norm = normalize_range(cfg.get("start"), cfg.get("end"), values.size)
-        spectrum = compute_period_spectrum(
-            values[start:end],
-            **spectrum_kwargs,
-        )
+        window = values[start_norm:end_norm]
+        spectrum = compute_period_spectrum(window, **spectrum_kwargs)
         # Convert arrays to lists for JSON friendliness later
         spectrum["period"] = spectrum["period"].tolist()
         spectrum["period_amplitude"] = spectrum["period_amplitude"].tolist()
         spectrum["display_mask"] = spectrum["display_mask"].tolist()
         spectrum["response_mask"] = spectrum["response_mask"].tolist()
-        results.append({**cfg, **spectrum, "start_norm": int(start_norm), "end_norm": int(end_norm)})
+        try:
+            folded_top1 = compute_folded_top1_period(window, **folded_kwargs)
+        except ValueError:
+            folded_top1 = float("nan")
+        results.append({
+            **cfg,
+            **spectrum,
+            "folded_top1_period": float(folded_top1),
+            "start_norm": int(start_norm),
+            "end_norm": int(end_norm),
+        })
     return results
 
 

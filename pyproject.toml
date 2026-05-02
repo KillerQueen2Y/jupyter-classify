@@ -6,10 +6,12 @@ dependencies = [
     "jupyter>=1.1.1",
     "matplotlib>=3.10.9",
     "numpy>=2.4.4",
+    "seaborn>=0.13.2",
     "torch>=2.11.0",
 ]
 
 [dependency-groups]
 dev = [
     "ipykernel>=7.2.0",
+    "pytest>=9.0.3",
 ]
