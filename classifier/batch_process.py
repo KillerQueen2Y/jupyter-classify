@@ -3,8 +3,13 @@ Batch processing script that walks `lastframe_*` runs and applies classification
 from `core.classify_attention` for each layer and head. Results are saved as JSON
 and per-layer FL images, and a combined FL image + `labels.csv` is produced per run.
 
-Supports `--direct` to skip writing per-layer files and instead keep per-layer
-images in memory and write only the combined image + CSV.
+Note: recent changes centralize labeling in `classifier/labeling.py` and
+signal-analysis in `classifier/core.py`. The `--sign-threshold` and
+`--period-threshold` CLI options are passed through to the labeling logic
+(`label_head_from_result`) so you can tune Anchor/Veil/Wave detection.
+
+The `--direct` flag now means: "skip all image generation and write only the
+`labels.csv` files" (previously it retained per-layer images in memory).
 
 Run as:
     uv run python -m classifier.batch_process --cache <data_root> --output-root <output> [--direct]
@@ -227,7 +232,7 @@ def parse_args():
     p.add_argument("--ignore-last-frames", type=int, default=3,
                    help="Number of frames at the end to ignore when computing periods (default: 3)")
     p.add_argument("--direct", action="store_true",
-                   help="If set, do not write per-layer JSON/PNG; generate combined image and CSV directly")
+                   help="If set, skip generating any images and only write labels CSVs")
     return p.parse_args()
 
 

@@ -5,7 +5,7 @@ perform majority vote per matrix position and write a combined CSV.
 Usage:
     uv run python -m ablation.aggregate_labels --csv_dir output\ablation\lab3\th7 --output ./output/label/
 
-Default output file: <output>/aggregated_labels.csv
+Default output file: <output>/aggregated_labels.csv. Use `--name` to change filename.
 
 Tie-breaking: choose smallest numeric label among those tied for max count.
 Labels: -1 Wave, 1 Anchor, 2 Veil, 0 Unknown
@@ -67,9 +67,9 @@ def majority_vote(padded_arrays):
     return out
 
 
-def save_output(mat: np.ndarray, out_dir: Path):
+def save_output(mat: np.ndarray, out_dir: Path, name: str = "aggregated_labels.csv"):
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "aggregated_labels.csv"
+    out_path = out_dir / name
     np.savetxt(out_path, mat, fmt='%d', delimiter=',')
     print(f"Wrote aggregated labels to: {out_path}")
     return out_path
@@ -83,7 +83,7 @@ def summarize_counts(mat: np.ndarray):
         print(f"  {k}: {v}")
 
 
-def main(csv_dir: str, output: str):
+def main(csv_dir: str, output: str, name: str = "aggregated_labels.csv"):
     csv_path = Path(csv_dir)
     if not csv_path.exists():
         print(f"CSV directory does not exist: {csv_dir}")
@@ -97,7 +97,7 @@ def main(csv_dir: str, output: str):
     if mat is None:
         print("No data to aggregate")
         return
-    out_path = save_output(mat, Path(output))
+    out_path = save_output(mat, Path(output), name=name)
     summarize_counts(mat)
 
 
@@ -105,5 +105,6 @@ if __name__ == '__main__':
     p = argparse.ArgumentParser(description='Aggregate labels.csv files by majority vote')
     p.add_argument('--csv_dir', required=True, help='Top-level directory containing run_* subdirs with labels.csv')
     p.add_argument('--output', default='./output/label/', help='Output directory for aggregated CSV')
+    p.add_argument('--name', default='aggregated_labels.csv', help='Output CSV filename (default: aggregated_labels.csv)')
     args = p.parse_args()
-    main(args.csv_dir, args.output)
+    main(args.csv_dir, args.output, name=args.name)
