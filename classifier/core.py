@@ -304,13 +304,33 @@ def classify_attention(
     else:
         attention_used = attention
 
+    # Ensure FFT ranges do not reference bins past the (used) signal length.
+    # Some saved .pt files have fewer than the notebook-assumed 72 frames;
+    # clamp any explicit "end" to the actual used frame count to avoid
+    # normalize_range raising for ranges like 0:69 on a 27-frame signal.
+    adjusted_fft_ranges = []
+    for cfg in fft_ranges:
+        cfg2 = dict(cfg)
+        end = cfg2.get("end")
+        # If an explicit end exceeds the available (used) frames, treat it as
+        # unspecified so downstream code uses the actual signal size. Do not
+        # print or modify source files; this is a local, silent adjustment.
+        if end is not None:
+            try:
+                end_val = int(end)
+            except Exception:
+                end_val = end
+            if isinstance(end_val, int) and end_val > int(attention_used.size):
+                cfg2["end"] = None
+        adjusted_fft_ranges.append(cfg2)
+
     softmax_full, softmax_window = local_softmax_1d(
         attention_used, softmax_range[0], softmax_range[1], temperature=softmax_temperature
     )
 
     raw_results = analyze_fft_ranges(
         attention_used,
-        fft_ranges,
+        adjusted_fft_ranges,
         period_min=period_min,
         period_max=period_max,
         response_period_min=response_period_min,

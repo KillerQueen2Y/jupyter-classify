@@ -140,10 +140,10 @@ def parse_args():
     p.add_argument('--ignore-last-frames', type=int, default=3, help='ignore-last-frames passed to classifier')
     p.add_argument('--ths', nargs='+', type=int, default=[70,80,90], help='List of th percentages to run (default: 70 80 90)')
     p.add_argument('--workers', type=int, default=3, help='Number of parallel pipelines to run')
-    p.add_argument('--name-template', default='256prompt_72frame_{period}thp_{th}ths.csv',
+    p.add_argument('--name-template', default='256prompt_{period}thp_{th}ths.csv',
                    help='Filename template for aggregated CSVs. Placeholders: {th}, {period}, {sign}')
     p.add_argument('--compare', action='store_true', help='If set, run grid_graph compare after aggregation')
-    p.add_argument('--origin', default='output/csv/final/diff_ths/256prompt_72frame_35thp_80ths.csv',
+    p.add_argument('--origin', default='output/csv/final/diff_ths/256prompt_35thp_80ths.csv',
                    help='Default origin CSV used by grid_graph compare')
     p.add_argument('--compare-output-dir', default='output/grid_graph/ths',
                    help='Directory where compare PNGs will be written')

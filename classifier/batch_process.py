@@ -32,10 +32,11 @@ import io
 DEFAULT_DATA_ROOT = Path("../lastframe_8")
 DEFAULT_OUTPUT_ROOT = Path("output")
 
-# Default FFT ranges used by the notebook; adapt if needed
+# Default FFT ranges: use full available frames from the .pt files
+# (avoid hardcoded 69/71 values; downstream code will interpret None as
+# the actual available frame count per file).
 FFT_RANGES = [
-    {"label": "0-68", "start": 0, "end": 69},
-    {"label": "0-71", "start": 0, "end": None},
+    {"label": "full", "start": 0, "end": None},
 ]
 
 

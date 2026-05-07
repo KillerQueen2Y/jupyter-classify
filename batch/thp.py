@@ -111,10 +111,10 @@ def parse_args():
     p.add_argument('--sign', type=float, default=None, help='(deprecated) Sign threshold; use --ths to provide percentage(s)')
     p.add_argument('--ignore-last-frames', type=int, default=3)
     p.add_argument('--workers', type=int, default=3)
-    p.add_argument('--name-template', default='256prompt_72frame_{thp}thp_{ths}ths.csv',
+    p.add_argument('--name-template', default='256prompt_{thp}thp_{ths}ths.csv',
                    help='Filename template for aggregated CSVs. Placeholders: {thp}, {thp_safe}, {ths}, {sign}')
     p.add_argument('--compare', action='store_true')
-    p.add_argument('--origin', default='output/csv/final/diff_ths/256prompt_72frame_35thp_80ths.csv')
+    p.add_argument('--origin', default='output/csv/final/diff_ths/256prompt_35thp_80ths.csv')
     p.add_argument('--compare-output-dir', default='output/grid_graph/thp')
     return p.parse_args()
 

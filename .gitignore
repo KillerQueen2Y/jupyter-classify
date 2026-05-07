@@ -41,6 +41,6 @@ plots/
 runs/
 *.log
 
-
+logs/
 cache/
 csv/
