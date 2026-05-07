@@ -154,7 +154,8 @@ def process_run(run_dir: Path, output_root: Path, cache_path: Path = None,
                         metrics = {}
                         if res.get('raw_results'):
                             rr = res.get('raw_results')[0]
-                            metrics['p'] = rr.get('global_period')
+                            # Use folded_top1_period (same as used in labeling logic) instead of global_period
+                            metrics['p'] = rr.get('folded_top1_period')
                             metrics['W'] = rr.get('global_amp')
                         parts = []
                         if metrics.get('p') is not None:
